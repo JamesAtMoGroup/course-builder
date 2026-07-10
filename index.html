@@ -810,29 +810,52 @@ const AI_SYS=`你是資深課程設計專家。依使用者提供的課程大綱
 - structure 課程架構：講解順序，一列＝一張簡報；開頭宣告完課產出、結尾統整。
 - steps/homework/reference 視情況補上。
 
-這是給講師修改的「草稿」，寧可具體也不要空泛。章節與單元數量依大綱合理拆分。`;
+這是給講師修改的「草稿」，寧可具體也不要空泛。章節與單元數量依大綱合理拆分。
+
+只輸出符合結構的 JSON 物件（最外層有 chapters 陣列），不要加任何說明文字、不要用 markdown 的 code fence。`;
 
 function aiView(){
   const card=document.createElement("div");card.className="card";
   const savedKey=localStorage.getItem(AI_KEY)||"";
-  const savedModel=localStorage.getItem(AI_MODEL)||"claude-sonnet-5";
+  const savedModel=localStorage.getItem(AI_MODEL)||"";
   card.innerHTML=`<div class="crumb">AI</div><div class="sec-h">AI 生成章節與單元</div>
     <div class="sec-d">貼上你的課程大綱或描述，AI 依「引導者」原則產出章節、單元骨架與腳本草稿（含知識點型別、概念比喻、易錯點、檢核點）。生成後會<strong>新增到現有章節後面</strong>，再由你逐項修改。</div>
-    <div class="stage-guide"><b>需要你自己的 Anthropic API key。</b>金鑰只存在你這台電腦的瀏覽器、直接送給 Anthropic（不經過任何中間伺服器）。到 <span style="text-decoration:underline">console.anthropic.com</span> → API Keys 取得，格式 <code>sk-ant-...</code>。用量費用由你的金鑰負擔。</div>
+    <div class="stage-guide"><b>需要你自己的 API key（支援 Anthropic 或 OpenRouter，自動偵測）。</b>金鑰只存在你這台電腦的瀏覽器、直接送給供應商（不經任何中間伺服器）。<br>· Anthropic：<code>sk-ant-...</code>（console.anthropic.com）　· OpenRouter：<code>sk-or-...</code>（openrouter.ai/keys）。用量費用由你的金鑰負擔。</div>
     <div class="field row2">
-      <div><label class="lb">API Key<span class="req">*</span></label><input class="tx" id="ai_key" type="password" placeholder="sk-ant-..." value="${esc(savedKey)}"></div>
-      <div><label class="lb">模型</label><select class="tx" id="ai_model">${AI_MODELS.map(m=>`<option value="${m.id}"${savedModel===m.id?" selected":""}>${m.label}</option>`).join("")}</select></div>
+      <div><label class="lb">API Key<span class="req">*</span></label><input class="tx" id="ai_key" type="password" placeholder="sk-ant-... 或 sk-or-..." value="${esc(savedKey)}">
+        <div class="ex" id="ai_prov"></div></div>
+      <div><label class="lb">模型<span class="hint" id="ai_modelhint"></span></label><input class="tx" id="ai_model" placeholder="claude-sonnet-5" value="${esc(savedModel)}"></div>
     </div>
     <div class="field"><label class="lb">課程大綱／描述<span class="req">*</span></label>
       <textarea class="tx" id="ai_outline" style="min-height:140px" placeholder="例：\n這是一門給完全新手的 Illustrator 向量繪圖入門課，大約 2 小時。\n想涵蓋：向量圖原理、基本工具（選取/填色/筆畫）、鋼筆與貝茲曲線、路徑管理員、漸變、最後做一顆立體蘋果當作品。\n學員多半沒用過設計軟體。">${esc((typeof aiOutlineCache!=="undefined"&&aiOutlineCache)||"")}</textarea></div>
     <button class="btn" id="ai_go" style="width:100%;padding:13px;font-size:15px">✨ 生成章節與單元</button>
     <div id="ai_status" style="margin-top:14px;font-size:13.5px;color:var(--sub)"></div>`;
   setTimeout(()=>{
-    $("#ai_key",card).oninput=e=>localStorage.setItem(AI_KEY,e.target.value.trim());
-    $("#ai_model",card).onchange=e=>localStorage.setItem(AI_MODEL,e.target.value);
+    const kEl=$("#ai_key",card),mEl=$("#ai_model",card);
+    const refresh=()=>{const p=providerOf(kEl.value);
+      $("#ai_prov",card).innerHTML=p.key?`偵測到：<b style="color:var(--rose-d)">${p.name}</b>`:"";
+      $("#ai_modelhint",card).textContent=p.key==="openrouter"?"例：anthropic/claude-sonnet-4.5（見 openrouter.ai/models）":"例：claude-sonnet-5";
+      const known=["claude-sonnet-5","anthropic/claude-sonnet-4.5"];const cur=mEl.value.trim();
+      if(!cur||(known.includes(cur)&&cur!==p.defaultModel)){mEl.value=p.defaultModel;localStorage.setItem(AI_MODEL,mEl.value);}
+    };
+    kEl.oninput=()=>{localStorage.setItem(AI_KEY,kEl.value.trim());refresh();};
+    mEl.oninput=()=>localStorage.setItem(AI_MODEL,mEl.value);
     $("#ai_go",card).onclick=()=>runAiGenerate(card);
+    refresh();
   },0);
   return card;
+}
+function providerOf(key){
+  const k=(key||"").trim();
+  if(k.startsWith("sk-or"))return {key:"openrouter",name:"OpenRouter",defaultModel:"anthropic/claude-sonnet-4.5"};
+  if(k.startsWith("sk-ant"))return {key:"anthropic",name:"Anthropic",defaultModel:"claude-sonnet-5"};
+  return {key:"",name:"",defaultModel:"claude-sonnet-5"};
+}
+function looseJson(text){
+  let t=(text||"").trim();
+  const f=t.match(/```(?:json)?\s*([\s\S]*?)```/i); if(f)t=f[1].trim();
+  const s=t.indexOf("{"),e=t.lastIndexOf("}"); if(s>=0&&e>s)t=t.slice(s,e+1);
+  return JSON.parse(t);
 }
 let aiOutlineCache="";
 async function runAiGenerate(card){
@@ -843,21 +866,30 @@ async function runAiGenerate(card){
   const st=$("#ai_status",card), go=$("#ai_go",card);
   if(!key){st.innerHTML='<span style="color:#b1524f">請先填入 API Key。</span>';return;}
   if(!outline){st.innerHTML='<span style="color:#b1524f">請先貼上課程大綱或描述。</span>';return;}
-  go.disabled=true;go.style.opacity=.6;st.innerHTML="⏳ AI 生成中…（依大綱長度約 15–60 秒，請勿關閉分頁）";
+  const prov=providerOf(key);
+  if(!prov.key){st.innerHTML='<span style="color:#b1524f">金鑰格式不認得。Anthropic 是 sk-ant-...，OpenRouter 是 sk-or-...。</span>';return;}
+  go.disabled=true;go.style.opacity=.6;st.innerHTML=`⏳ 透過 ${prov.name} 生成中…（依大綱長度約 15–60 秒，請勿關閉分頁）`;
   try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model,max_tokens:16000,system:AI_SYS,
-        output_config:{format:{type:"json_schema",schema:AI_SCHEMA}},
-        messages:[{role:"user",content:outline}]})
-    });
+    let url,headers,body;
+    if(prov.key==="anthropic"){
+      url="https://api.anthropic.com/v1/messages";
+      headers={"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
+      body={model,max_tokens:16000,system:AI_SYS,output_config:{format:{type:"json_schema",schema:AI_SCHEMA}},messages:[{role:"user",content:outline}]};
+    }else{
+      url="https://openrouter.ai/api/v1/chat/completions";
+      headers={"content-type":"application/json","authorization":"Bearer "+key};
+      body={model,max_tokens:16000,messages:[{role:"system",content:AI_SYS},{role:"user",content:outline}],
+        response_format:{type:"json_schema",json_schema:{name:"course_structure",strict:true,schema:AI_SCHEMA}}};
+    }
+    const res=await fetch(url,{method:"POST",headers,body:JSON.stringify(body)});
     const data=await res.json();
-    if(!res.ok){const msg=(data&&data.error&&data.error.message)||("HTTP "+res.status);
-      st.innerHTML=`<span style="color:#b1524f">生成失敗：${esc(msg)}</span>`;go.disabled=false;go.style.opacity=1;return;}
-    const block=(data.content||[]).find(b=>b.type==="text");
-    if(!block){st.innerHTML='<span style="color:#b1524f">回應沒有內容，請重試或換個大綱。</span>';go.disabled=false;go.style.opacity=1;return;}
-    let parsed;try{parsed=JSON.parse(block.text);}catch(e){st.innerHTML='<span style="color:#b1524f">解析結果失敗，請重試。</span>';go.disabled=false;go.style.opacity=1;return;}
+    if(!res.ok){const msg=(data&&data.error&&(data.error.message||data.error))||("HTTP "+res.status);
+      st.innerHTML=`<span style="color:#b1524f">生成失敗：${esc(typeof msg==="string"?msg:JSON.stringify(msg))}</span>`;go.disabled=false;go.style.opacity=1;return;}
+    let raw;
+    if(prov.key==="anthropic"){const block=(data.content||[]).find(b=>b.type==="text");raw=block&&block.text;}
+    else{raw=data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;}
+    if(!raw){st.innerHTML='<span style="color:#b1524f">回應沒有內容，請重試或換個大綱／模型。</span>';go.disabled=false;go.style.opacity=1;return;}
+    let parsed;try{parsed=looseJson(raw);}catch(e){st.innerHTML='<span style="color:#b1524f">解析結果失敗（模型沒回傳乾淨 JSON），請重試或換模型。</span>';go.disabled=false;go.style.opacity=1;return;}
     const added=mergeAiChapters(parsed);
     save();st.innerHTML=`<span style="color:var(--green)">✓ 已新增 ${added.ch} 個章節、${added.u} 個單元（草稿）。到「課程資訊」查看並修改。</span>`;
     go.disabled=false;go.style.opacity=1;
