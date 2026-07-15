@@ -866,8 +866,21 @@ function providerOf(key){
 function looseJson(text){
   let t=(text||"").trim();
   const f=t.match(/```(?:json)?\s*([\s\S]*?)```/i); if(f)t=f[1].trim();
-  const s=t.indexOf("{"),e=t.lastIndexOf("}"); if(s>=0&&e>s)t=t.slice(s,e+1);
-  return JSON.parse(t);
+  const s=t.indexOf("{"); if(s<0)throw new Error("no json object");
+  t=t.slice(s);
+  try{const e=t.lastIndexOf("}");if(e>0)return JSON.parse(t.slice(0,e+1));}catch(_){}
+  return JSON.parse(repairJson(t)); // 截斷時嘗試補回未閉合的括號/字串
+}
+function repairJson(t){
+  let out="",inStr=false,esc=false;const stack=[];
+  for(let i=0;i<t.length;i++){const c=t[i];out+=c;
+    if(inStr){if(esc)esc=false;else if(c==="\\")esc=true;else if(c==='"')inStr=false;continue;}
+    if(c==='"')inStr=true;else if(c==="{"||c==="[")stack.push(c==="{"?"}":"]");
+    else if(c==="}"||c==="]")stack.pop();}
+  if(inStr)out+='"';
+  out=out.replace(/,\s*$/,"").replace(/:\s*$/,":null").replace(/,\s*("[^"]*"\s*:)?\s*$/,"");
+  while(stack.length)out+=stack.pop();
+  return out;
 }
 let aiOutlineCache="";
 async function runAiGenerate(card){
@@ -886,12 +899,12 @@ async function runAiGenerate(card){
     if(prov.key==="anthropic"){
       url="https://api.anthropic.com/v1/messages";
       headers={"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
-      body={model,max_tokens:16000,system:AI_SYS,output_config:{format:{type:"json_schema",schema:AI_SCHEMA}},messages:[{role:"user",content:outline}]};
+      body={model,max_tokens:32000,system:AI_SYS,output_config:{format:{type:"json_schema",schema:AI_SCHEMA}},messages:[{role:"user",content:outline}]};
     }else{
       url="https://openrouter.ai/api/v1/chat/completions";
       headers={"content-type":"application/json","authorization":"Bearer "+key,"x-title":"Course Builder"};
       // 不加 response_format：Claude 經 OpenRouter 多半不支援 json_schema，改靠系統提示要求純 JSON + looseJson 解析
-      body={model,max_tokens:16000,messages:[{role:"system",content:AI_SYS},{role:"user",content:outline}]};
+      body={model,max_tokens:32000,messages:[{role:"system",content:AI_SYS},{role:"user",content:outline}]};
     }
     const res=await fetch(url,{method:"POST",headers,body:JSON.stringify(body)});
     const data=await res.json();
@@ -904,7 +917,9 @@ async function runAiGenerate(card){
     let parsed;try{parsed=looseJson(raw);}catch(e){st.innerHTML='<span style="color:#b1524f">解析結果失敗（模型沒回傳乾淨 JSON），請重試或換模型。</span>';go.disabled=false;go.style.opacity=1;return;}
     fillAiCourse(parsed);
     const added=mergeAiChapters(parsed);
-    save();st.innerHTML=`<span style="color:var(--green)">✓ 已帶入課程資訊，並新增 ${added.ch} 個章節、${added.u} 個單元（草稿）。到「課程資訊」查看並修改。</span>`;
+    const truncated=prov.key==="anthropic"?data.stop_reason==="max_tokens":(data.choices&&data.choices[0]&&data.choices[0].finish_reason==="length");
+    save();st.innerHTML=`<span style="color:var(--green)">✓ 已帶入課程資訊，並新增 ${added.ch} 個章節、${added.u} 個單元（草稿）。到「課程資訊」查看並修改。</span>`
+      +(truncated?'<br><span style="color:#c98a2b">⚠ 內容較多、輸出可能被截斷，尾端章節或許不完整（已盡量還原）。建議把大綱拆小一點分批生成，或減少一次要的單元數。</span>':'');
     go.disabled=false;go.style.opacity=1;
     setTimeout(()=>{view.mode="course";renderBuilder();},900);
   }catch(err){
