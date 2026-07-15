@@ -812,7 +812,9 @@ const AI_SYS=`你是資深課程設計專家。依使用者提供的課程大綱
 
 這是給講師修改的「草稿」，寧可具體也不要空泛。章節與單元數量依大綱合理拆分。
 
-只輸出符合結構的 JSON 物件（最外層有 chapters 陣列），不要加任何說明文字、不要用 markdown 的 code fence。`;
+只輸出符合下列結構的 JSON 物件，不要加任何說明文字、不要用 markdown code fence。請嚴格使用這些英文 key（不要改成中文 key）：
+{"chapters":[{"title":"章節名稱","description":"章節簡介","units":[{"title":"單元名稱","duration":"約 15 分","objective":"學習目標","knowledgePoints":[{"name":"知識點名稱","type":"theory 或 tool 或 prac"}],"analogy":"概念比喻","misconception":"易錯點","checkpoint":"檢核點(具體是非題)","demoOutput":"示範任務產出","steps":["思考步驟"],"structure":["一列＝一張簡報"],"homework":"回家作業","reference":"參考資料"}]}]}
+每個 title 與 name 都必填、不可留空。`;
 
 function aiView(){
   const card=document.createElement("div");card.className="card";
@@ -899,17 +901,25 @@ async function runAiGenerate(card){
     go.disabled=false;go.style.opacity=1;
   }
 }
+function aiPick(o,keys){for(const k of keys){const v=o&&o[k];if(v!=null&&v!=="")return v;}return "";}
+function aiArr(o,keys){for(const k of keys){const v=o&&o[k];if(Array.isArray(v))return v;}return [];}
 function mergeAiChapters(parsed){
   let chn=0,un=0;const TSET={theory:1,tool:1,prac:1};
-  (parsed.chapters||[]).forEach(c=>{
-    const ch=newChapter(c.title||"未命名章節");ch.desc=c.description||"";
-    (c.units||[]).forEach(u=>{
-      const nu=newUnit(u.title||"未命名單元");
-      nu.duration=u.duration||"";nu.objective=u.objective||"";
-      nu.points=(u.knowledgePoints||[]).map(p=>({name:p.name||"",type:TSET[p.type]?p.type:""}));
-      nu.analogy=u.analogy||"";nu.misconception=u.misconception||"";nu.checkpoint=u.checkpoint||"";
-      nu.demoOutput=u.demoOutput||"";nu.steps=(u.steps||[]).slice();nu.structure=(u.structure||[]).slice();
-      nu.homework=u.homework||"";nu.reference=u.reference||"";
+  const chapters=aiArr(parsed,["chapters","章節"]);
+  chapters.forEach(c=>{
+    const ch=newChapter(aiPick(c,["title","name","標題","名稱","章節名稱"])||"未命名章節");
+    ch.desc=aiPick(c,["description","desc","簡介","說明","章節簡介"]);
+    aiArr(c,["units","單元","unit"]).forEach(u=>{
+      const nu=newUnit(aiPick(u,["title","name","標題","名稱","單元名稱"])||"未命名單元");
+      nu.duration=aiPick(u,["duration","時長","時數"]);nu.objective=aiPick(u,["objective","目標","學習目標"]);
+      nu.points=aiArr(u,["knowledgePoints","points","知識點","knowledge_points"]).map(p=>{
+        if(typeof p==="string")return {name:p,type:""};
+        const t=aiPick(p,["type","型別","類型"]);return {name:aiPick(p,["name","title","名稱"]),type:TSET[t]?t:""};});
+      nu.analogy=aiPick(u,["analogy","概念比喻","比喻"]);nu.misconception=aiPick(u,["misconception","易錯點","誤解點"]);
+      nu.checkpoint=aiPick(u,["checkpoint","檢核點"]);nu.demoOutput=aiPick(u,["demoOutput","示範任務","示範產出","demo"]);
+      nu.steps=aiArr(u,["steps","步驟","思考步驟"]).map(s=>typeof s==="string"?s:aiPick(s,["text","name","step"]));
+      nu.structure=aiArr(u,["structure","課程架構","架構"]).map(s=>typeof s==="string"?s:aiPick(s,["text","name"]));
+      nu.homework=aiPick(u,["homework","回家作業","作業"]);nu.reference=aiPick(u,["reference","參考資料","參考"]);
       ch.units.push(nu);un++;
     });
     state.chapters.push(ch);chn++;
