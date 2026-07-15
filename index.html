@@ -782,6 +782,8 @@ const AI_MODELS=[
   {id:"claude-haiku-4-5",label:"Haiku 4.5（最快最省）"}
 ];
 const AI_SCHEMA={type:"object",additionalProperties:false,required:["chapters"],properties:{
+  course:{type:"object",additionalProperties:false,properties:{
+    name:{type:"string"},description:{type:"string"},audience:{type:"string"},objective:{type:"string"},type:{type:"string"}}},
   chapters:{type:"array",items:{type:"object",additionalProperties:false,required:["title","units"],properties:{
     title:{type:"string"},description:{type:"string"},
     units:{type:"array",items:{type:"object",additionalProperties:false,
@@ -800,6 +802,8 @@ const AI_SYS=`你是資深課程設計專家。依使用者提供的課程大綱
 
 核心信念：講師是「引導者」不是「表演者」。好課 = 學員學得會 × 做得出來 × 想繼續學。
 
+先根據大綱判斷整門課的 course 資訊（課程名稱、一兩句說明、授課對象、整體學習目標、課程型態），再往下拆章節與單元。course.type 只能三選一：偏觀念（以簡報講解為主）／偏實作（以螢幕錄製／操作為主）／觀念＋實作都有。
+
 每個單元請設計：
 - objective 學習目標：完課後「能做到」什麼，要能被示範任務驗收。
 - knowledgePoints 知識點：每個標型別 —— theory(講對錯/觀念) / tool(教工具操作) / prac(實際做出成品)。
@@ -807,13 +811,13 @@ const AI_SYS=`你是資深課程設計專家。依使用者提供的課程大綱
 - misconception 易錯點：學員最容易犯的錯，以及怎麼修正。
 - checkpoint 檢核點：一個讓學員「當場自問我做對了嗎」的具體是非題（例如「這個區域有沒有封閉？」），不是模糊的「檢查對不對」。
 - demoOutput 示範任務：老師當場做出一個具體成品。
-- structure 課程架構：講解順序，一列＝一張簡報；開頭宣告完課產出、結尾統整。
+- structure 課程架構：這一個單元的「投影片逐張清單」，一列＝一張簡報。**每一列都要具體寫出這張投影片要放什麼內容**，讓製作教材的人一看就能照做——例如：「標題頁：本單元完課後你會做出 X」「用橡皮筋圖解說明錨點與線段的關係（配一張示意圖）」「畫面示範：從封閉路徑填色，紅框標出『封閉了嗎』檢查點」「常見錯誤：忘了封閉會怎樣（前後對比圖）」「小結：本單元 3 個重點條列」。不要只寫「說明工具」這種空泛標題。一個 10–15 分鐘的單元大約 6–12 張；開頭一張宣告完課產出、結尾一張統整。
 - steps/homework/reference 視情況補上。
 
 這是給講師修改的「草稿」，寧可具體也不要空泛。章節與單元數量依大綱合理拆分。
 
 只輸出符合下列結構的 JSON 物件，不要加任何說明文字、不要用 markdown code fence。請嚴格使用這些英文 key（不要改成中文 key）：
-{"chapters":[{"title":"章節名稱","description":"章節簡介","units":[{"title":"單元名稱","duration":"約 15 分","objective":"學習目標","knowledgePoints":[{"name":"知識點名稱","type":"theory 或 tool 或 prac"}],"analogy":"概念比喻","misconception":"易錯點","checkpoint":"檢核點(具體是非題)","demoOutput":"示範任務產出","steps":["思考步驟"],"structure":["一列＝一張簡報"],"homework":"回家作業","reference":"參考資料"}]}]}
+{"course":{"name":"課程名稱","description":"一兩句課程說明","audience":"授課對象","objective":"整體學習目標","type":"偏觀念（以簡報講解為主）"},"chapters":[{"title":"章節名稱","description":"章節簡介","units":[{"title":"單元名稱","duration":"約 15 分","objective":"學習目標","knowledgePoints":[{"name":"知識點名稱","type":"theory 或 tool 或 prac"}],"analogy":"概念比喻","misconception":"易錯點","checkpoint":"檢核點(具體是非題)","demoOutput":"示範任務產出","steps":["思考步驟"],"structure":["標題頁：本單元完課後會做出…","（每張投影片一列，寫清楚內容）","小結：本單元 3 個重點"],"homework":"回家作業","reference":"參考資料"}]}]}
 每個 title 與 name 都必填、不可留空。`;
 
 function aiView(){
@@ -892,8 +896,9 @@ async function runAiGenerate(card){
     else{raw=data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;}
     if(!raw){st.innerHTML='<span style="color:#b1524f">回應沒有內容，請重試或換個大綱／模型。</span>';go.disabled=false;go.style.opacity=1;return;}
     let parsed;try{parsed=looseJson(raw);}catch(e){st.innerHTML='<span style="color:#b1524f">解析結果失敗（模型沒回傳乾淨 JSON），請重試或換模型。</span>';go.disabled=false;go.style.opacity=1;return;}
+    fillAiCourse(parsed);
     const added=mergeAiChapters(parsed);
-    save();st.innerHTML=`<span style="color:var(--green)">✓ 已新增 ${added.ch} 個章節、${added.u} 個單元（草稿）。到「課程資訊」查看並修改。</span>`;
+    save();st.innerHTML=`<span style="color:var(--green)">✓ 已帶入課程資訊，並新增 ${added.ch} 個章節、${added.u} 個單元（草稿）。到「課程資訊」查看並修改。</span>`;
     go.disabled=false;go.style.opacity=1;
     setTimeout(()=>{view.mode="course";renderBuilder();},900);
   }catch(err){
@@ -903,6 +908,24 @@ async function runAiGenerate(card){
 }
 function aiPick(o,keys){for(const k of keys){const v=o&&o[k];if(v!=null&&v!=="")return v;}return "";}
 function aiArr(o,keys){for(const k of keys){const v=o&&o[k];if(Array.isArray(v))return v;}return [];}
+const COURSE_TYPES=["偏觀念（以簡報講解為主）","偏實作（以螢幕錄製／操作為主）","觀念＋實作都有"];
+function aiCourseType(raw){
+  const t=(raw||"").trim();if(!t)return "";
+  const exact=COURSE_TYPES.find(x=>x===t);if(exact)return exact;
+  const hasConcept=/觀念|概念|簡報/.test(t),hasPrac=/實作|操作|螢幕|錄製/.test(t);
+  if(hasConcept&&hasPrac)return COURSE_TYPES[2];
+  if(hasPrac)return COURSE_TYPES[1];
+  if(hasConcept)return COURSE_TYPES[0];
+  return "";
+}
+function fillAiCourse(parsed){
+  const c=parsed&&(parsed.course||parsed.課程);if(!c)return;const cur=state.course;const set=(k,v)=>{if(v&&!(cur[k]||"").trim())cur[k]=v;};
+  set("name",aiPick(c,["name","title","課程名稱","名稱"]));
+  set("desc",aiPick(c,["description","desc","說明","簡介","課程說明"]));
+  set("audience",aiPick(c,["audience","授課對象","對象"]));
+  set("objective",aiPick(c,["objective","目標","整體學習目標","學習目標"]));
+  if(!(cur.type||"").trim()){const t=aiCourseType(aiPick(c,["type","課程型態","型態"]));if(t)cur.type=t;}
+}
 function mergeAiChapters(parsed){
   let chn=0,un=0;const TSET={theory:1,tool:1,prac:1};
   const chapters=aiArr(parsed,["chapters","章節"]);
