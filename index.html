@@ -233,7 +233,7 @@
   .doc .f{margin:11px 0}
   .doc .f .fl{font-size:12px;font-weight:800;color:var(--rose);letter-spacing:.04em;margin-bottom:2px}
   .doc .f .fv{font-size:14px;color:#2c2825;line-height:1.7;white-space:pre-wrap}
-  .doc .f ol,.doc .f ul{margin:4px 0 4px 22px} .doc .f li{font-size:14px;margin:3px 0}
+  .doc .f ol,.doc .f ul{margin:4px 0 4px 22px} .doc .f li{font-size:14px;margin:5px 0;white-space:pre-wrap;line-height:1.6}
   .doc .tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:5px;margin-left:5px}
   .doc .tag.theory{background:var(--green-soft);color:var(--green)} .doc .tag.tool{background:var(--amber-soft);color:var(--amber)} .doc .tag.prac{background:var(--rose-soft);color:var(--rose)}
   .doc .ckwrap{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px}
@@ -643,10 +643,10 @@ function scriptStage(u){
     bind("#u_misc",v=>u.misconception=v);bind("#u_check",v=>u.checkpoint=v);bind("#u_demo",v=>u.demoOutput=v);
     bind("#u_hw",v=>u.homework=v);bind("#u_ref",v=>u.reference=v);
     renderPoints(u);renderSimple(u.steps,"#u_steps","例：先了解填色與封閉區域的關係");
-    renderSimple(u.structure,"#u_struct","例：說明目標 → 示範填色 → 換筆畫 → 統整");
+    renderSimple(u.structure,"#u_struct","一張投影片：\n標題：…\n· 這張要放的重點／要展示什麼\n· 老師可以說的一句話",true);
     $("#u_addpoint").onclick=()=>{u.points.push({name:"",type:""});renderPoints(u);save();};
     $("#u_addstep").onclick=()=>{u.steps.push("");renderSimple(u.steps,"#u_steps","步驟…");save();};
-    $("#u_addstruct").onclick=()=>{u.structure.push("");renderSimple(u.structure,"#u_struct","一列＝一張簡報…");save();};
+    $("#u_addstruct").onclick=()=>{u.structure.push("");renderSimple(u.structure,"#u_struct","一張投影片的內容…",true);save();};
     renderCkBlock(CK1,u.ck1,"#u_ck1","p1",u);
   },0);
   return wrap;
@@ -687,12 +687,14 @@ function renderPoints(u){
     box.appendChild(el);
   });
 }
-function renderSimple(arr,sel,ph){
+function renderSimple(arr,sel,ph,ml){
   const box=$(sel);if(!box)return;box.innerHTML="";
   arr.forEach((v,i)=>{
     const el=document.createElement("div");el.className="row-item";
-    el.innerHTML=`<button class="rm">×</button><div class="rtop"><div class="idx">${i+1}</div><input class="tx v" placeholder="${ph}" value="${esc(v)}"></div>`;
-    el.querySelector(".rm").onclick=()=>{arr.splice(i,1);renderSimple(arr,sel,ph);save();};
+    const inner=ml?`<textarea class="tx v" rows="3" style="min-height:64px" placeholder="${ph}">${esc(v)}</textarea>`
+      :`<input class="tx v" placeholder="${ph}" value="${esc(v)}">`;
+    el.innerHTML=`<button class="rm">×</button><div class="rtop"${ml?' style="align-items:flex-start"':''}><div class="idx">${i+1}</div>${inner}</div>`;
+    el.querySelector(".rm").onclick=()=>{arr.splice(i,1);renderSimple(arr,sel,ph,ml);save();};
     el.querySelector(".v").oninput=e=>{arr[i]=e.target.value;save();};
     box.appendChild(el);
   });
@@ -811,13 +813,17 @@ const AI_SYS=`你是資深課程設計專家。依使用者提供的課程大綱
 - misconception 易錯點：學員最容易犯的錯，以及怎麼修正。
 - checkpoint 檢核點：一個讓學員「當場自問我做對了嗎」的具體是非題（例如「這個區域有沒有封閉？」），不是模糊的「檢查對不對」。
 - demoOutput 示範任務：老師當場做出一個具體成品。
-- structure 課程架構：這一個單元的「投影片逐張清單」，一列＝一張簡報。**每一列都要具體寫出這張投影片要放什麼內容**，讓製作教材的人一看就能照做——例如：「標題頁：本單元完課後你會做出 X」「用橡皮筋圖解說明錨點與線段的關係（配一張示意圖）」「畫面示範：從封閉路徑填色，紅框標出『封閉了嗎』檢查點」「常見錯誤：忘了封閉會怎樣（前後對比圖）」「小結：本單元 3 個重點條列」。不要只寫「說明工具」這種空泛標題。一個 10–15 分鐘的單元大約 6–12 張；開頭一張宣告完課產出、結尾一張統整。
+- structure 課程架構：這一個單元的「投影片逐張清單」，陣列每一個元素＝一張投影片。**每一張都要是一段多行的完整投影片說明**（字串內用 \\n 換行），格式固定為：
+    第一行「標題：…」
+    接著 2–4 行「· …」寫這張要放的重點、要展示的畫面／圖表／範例、或要做的操作
+    最後（可選）一行「老師可以說：…」的引導語或提問
+  要具體到「製作教材的人照著就能把這張投影片做出來」，絕不能只給一句空泛標題。一個 10–15 分鐘單元約 6–12 張；開頭一張宣告完課產出、結尾一張統整。
 - steps/homework/reference 視情況補上。
 
 這是給講師修改的「草稿」，寧可具體也不要空泛。章節與單元數量依大綱合理拆分。
 
 只輸出符合下列結構的 JSON 物件，不要加任何說明文字、不要用 markdown code fence。請嚴格使用這些英文 key（不要改成中文 key）：
-{"course":{"name":"課程名稱","description":"一兩句課程說明","audience":"授課對象","objective":"整體學習目標","type":"偏觀念（以簡報講解為主）"},"chapters":[{"title":"章節名稱","description":"章節簡介","units":[{"title":"單元名稱","duration":"約 15 分","objective":"學習目標","knowledgePoints":[{"name":"知識點名稱","type":"theory 或 tool 或 prac"}],"analogy":"概念比喻","misconception":"易錯點","checkpoint":"檢核點(具體是非題)","demoOutput":"示範任務產出","steps":["思考步驟"],"structure":["標題頁：本單元完課後會做出…","（每張投影片一列，寫清楚內容）","小結：本單元 3 個重點"],"homework":"回家作業","reference":"參考資料"}]}]}
+{"course":{"name":"課程名稱","description":"一兩句課程說明","audience":"授課對象","objective":"整體學習目標","type":"偏觀念（以簡報講解為主）"},"chapters":[{"title":"章節名稱","description":"章節簡介","units":[{"title":"單元名稱","duration":"約 15 分","objective":"學習目標","knowledgePoints":[{"name":"知識點名稱","type":"theory 或 tool 或 prac"}],"analogy":"概念比喻","misconception":"易錯點","checkpoint":"檢核點(具體是非題)","demoOutput":"示範任務產出","steps":["思考步驟"],"structure":["標題：本單元完課後你會做出 X\\n· 一句話說明學完能幹嘛\\n· 老師可以說：跟著我做一次你就會了","知識點1：資料保存政策比較\\n· 三大平台各自政策一句話\\n· 放一張比較表（欄：平台／是否訓練／保留天數）\\n· 老師提問：你以為刪掉就沒了嗎？","小結：本單元 3 個重點條列\\n· 重點一\\n· 重點二\\n· 重點三"],"homework":"回家作業","reference":"參考資料"}]}]}
 每個 title 與 name 都必填、不可留空。`;
 
 function aiView(){
@@ -996,7 +1002,7 @@ function buildUnitMd(u,ci,ui){
   const tl={theory:"理論",tool:"工具",prac:"實作","":"未分類"};
   const pts=u.points.map((p,i)=>`${i+1}. ${p.name||"（未命名）"}　\`${tl[p.type||""]}\``).join("\n")||"（未填）";
   const steps=u.steps.map((v,i)=>`${i+1}. ${v}`).join("\n")||"（未填）";
-  const struct=u.structure.map((v,i)=>`${i+1}. ${v}`).join("\n")||"（未填）";
+  const struct=u.structure.map((v,i)=>`${i+1}. ${String(v).replace(/\n/g,"\n   ")}`).join("\n")||"（未填）";
   const sc=ck3Done(u)?`${sumScore(u)}/25（${grade(sumScore(u)).g}：${grade(sumScore(u)).d}）`:"未完成評分";
   return `### 單元 ${ci+1}-${ui+1}｜${u.title||"未命名單元"}${u.duration?`（${u.duration}）`:""}
 
