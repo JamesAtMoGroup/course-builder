@@ -871,6 +871,7 @@ const AI_SKELETON_SCHEMA={type:"object",additionalProperties:false,required:["ch
 const AI_EXPAND_SYS=`你是資深課程設計專家。要把「某一章」的每個單元展開成完整教學腳本，全部繁體中文（台灣用語）。核心信念：講師是引導者不是表演者。
 
 我會給你：課程資訊、這一章的標題/簡介、以及本章單元清單（每個有標題與主軸 focus）。請**依相同順序、相同數量**回傳每個單元的完整內容；若我附了「調整指示」，優先照它改。**單元只聚焦自己的主軸，別把不屬於本單元的東西硬加進來。**
+若我附了【前面章節已教過的內容】，代表那些前面單元已經講過 —— 你要**承接它往上遞進、不要重複已教過的觀念/例子/比喻**；需要時可以直接說「延續前面提到的 X…」帶學員接上。
 
 每個單元設計：
 - objective 學習目標：完課後「能做到」什麼、可被示範任務驗收。
@@ -917,7 +918,13 @@ function isUnitFilled(u){return !!((u.objective&&u.objective.trim())||(u.points&
 function expandBatchMsg(ci,idxs,extra){
   const c=state.chapters[ci],co=state.course;
   const units=idxs.map((i,n)=>`${n+1}. ${c.units[i].title||"未命名"}（主軸：${c.units[i].focus||"未定"}）`).join("\n");
-  let msg=`【課程資訊】\n名稱：${co.name}\n對象：${co.audience}\n型態：${co.type}\n整體學習目標：${co.objective}\n\n【本章】第 ${ci+1} 章「${c.title}」\n章節簡介：${c.desc||"（無）"}\n\n【要展開的單元（請依序、剛好回傳 ${idxs.length} 個）】\n${units}`;
+  // 前情摘要：把前面各章的標題＋單元標題附上，讓本章承接、不重複、往上遞進
+  let prior="";
+  if(ci>0){
+    const recap=state.chapters.slice(0,ci).map((pc,m)=>`第 ${m+1} 章「${pc.title||"?"}」：${(pc.units||[]).map(u=>u.title||"?").join("、")||"（無單元）"}`).join("\n");
+    prior=`\n\n【前面章節已教過的內容（承接它、不要重複已教過的觀念/例子/比喻，需要時可說「延續前面提到的…」，並往上遞進）】\n${recap}`;
+  }
+  let msg=`【課程資訊】\n名稱：${co.name}\n對象：${co.audience}\n型態：${co.type}\n整體學習目標：${co.objective}${prior}\n\n【本章】第 ${ci+1} 章「${c.title}」\n章節簡介：${c.desc||"（無）"}\n\n【要展開的單元（請依序、剛好回傳 ${idxs.length} 個）】\n${units}`;
   if(extra&&extra.trim())msg+=`\n\n【調整指示】${extra.trim()}`;
   return msg;
 }
