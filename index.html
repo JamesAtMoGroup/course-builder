@@ -403,7 +403,7 @@ const CK3=[
   {t:"語調有起伏",o:["語調語速固定、毫無起伏","語調語速像平常說話一樣自然","會用語調語速變化帶學員抓重點"]}
 ];
 
-function newUnit(t){return {title:t||"",duration:"",objective:"",points:[],analogy:"",misconception:"",checkpoint:"",
+function newUnit(t){return {title:t||"",duration:"",focus:"",objective:"",points:[],analogy:"",misconception:"",checkpoint:"",
   demoOutput:"",steps:[],structure:[],homework:"",reference:"",materialNote:"",footageNote:"",ck1:{},ck2:{},ck3:{}};}
 function newChapter(t){return {title:t||"",desc:"",units:[]};}
 let state={course:{name:"",desc:"",type:"",audience:"",objective:""},chapters:[]};
@@ -493,6 +493,12 @@ function chapterView(c){
     <div class="subhd">本章單元</div>
     <div id="chUnits"></div>
     <button class="add" id="ch_addu">＋ 新增單元</button>
+    <div class="field" style="margin-top:18px;padding:12px;border:1.5px dashed var(--line);border-radius:10px;background:var(--panel)">
+      <label class="lb">🔄 AI 重生／微調這一章<span class="hint">只重跑這一章的單元內容，不用整份重產。</span></label>
+      <input class="tx" id="ch_regen_note" placeholder="（選填）調整指示，例：多舉招募場景的例子、每堂再精簡、換個比喻" style="margin-bottom:8px">
+      <button class="btn sm" id="ch_regen" style="background:var(--ink);color:#fff">重生本章單元內容</button>
+      <div id="ch_regen_status" style="margin-top:8px;font-size:13px;color:var(--sub)"></div>
+    </div>
     <div style="margin-top:22px;display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn ghost sm" id="ch_prev" style="background:var(--panel);color:var(--ink);border:1.5px solid var(--line)">← 上一章</button>
       <button class="btn ghost sm" id="ch_next" style="background:var(--panel);color:var(--ink);border:1.5px solid var(--line)">下一章 →</button>
@@ -509,6 +515,14 @@ function chapterView(c){
     prev.style.opacity=ci===0?.4:1;next.style.opacity=ci===state.chapters.length-1?.4:1;
     prev.onclick=()=>{if(ci>0){view={mode:"chapter",ci:ci-1};renderBuilder();}};
     next.onclick=()=>{if(ci<state.chapters.length-1){view={mode:"chapter",ci:ci+1};renderBuilder();}};
+    const rg=$("#ch_regen",card),rgs=$("#ch_regen_status",card);
+    if(rg)rg.onclick=async()=>{
+      if(!c.units.length){rgs.innerHTML='<span style="color:#b1524f">這一章還沒有單元，先「新增單元」或用 AI 生成。</span>';return;}
+      const note=($("#ch_regen_note",card).value||"").trim();
+      rg.disabled=true;rg.style.opacity=.6;rgs.innerHTML='⏳ AI 重生本章單元內容中…（約 15–40 秒，請勿關閉分頁）';
+      try{await aiExpandChapter(ci,note);delete c._expandErr;save();renderBuilder();}
+      catch(e){rgs.innerHTML=`<span style="color:#b1524f">失敗：${esc(String(e&&e.message||e))}</span>`;rg.disabled=false;rg.style.opacity=1;}
+    };
     renderChUnits(c,ci,card);
   },0);
   return card;
@@ -826,12 +840,116 @@ const AI_SYS=`你是資深課程設計專家。依使用者提供的課程大綱
 {"course":{"name":"課程名稱","description":"一兩句課程說明","audience":"授課對象","objective":"整體學習目標","type":"偏觀念（以簡報講解為主）"},"chapters":[{"title":"章節名稱","description":"章節簡介","units":[{"title":"單元名稱","duration":"約 15 分","objective":"學習目標","knowledgePoints":[{"name":"知識點名稱","type":"theory 或 tool 或 prac"}],"analogy":"概念比喻","misconception":"易錯點","checkpoint":"檢核點(具體是非題)","demoOutput":"示範任務產出","steps":["思考步驟"],"structure":["標題：本單元完課後你會做出 X\\n· 一句話說明學完能幹嘛\\n· 老師可以說：跟著我做一次你就會了","知識點1：資料保存政策比較\\n· 三大平台各自政策一句話\\n· 放一張比較表（欄：平台／是否訓練／保留天數）\\n· 老師提問：你以為刪掉就沒了嗎？","小結：本單元 3 個重點條列\\n· 重點一\\n· 重點二\\n· 重點三"],"homework":"回家作業","reference":"參考資料"}]}]}
 每個 title 與 name 都必填、不可留空。`;
 
+/* ===== 兩階段 AI 生成：Phase A 骨架 → Phase B 逐章展開 ===== */
+const AI_SKELETON_SYS=`你是資深課程設計專家。依大綱先產「課程骨架」：課程資訊 + 章節 + 每章的單元（只要「標題＋主軸 focus＋預估時長」），全部繁體中文（台灣用語）。此階段只要骨架、不要展開細節（細節之後逐章補）。
+
+核心信念：講師是引導者不是表演者。好課 = 學員學得會 × 做得出來 × 想繼續學。
+
+【單元顆粒度｜最重要，避免資訊過載】
+- 一個單元只聚焦「一件事、一個主軸」。理論、工具、實作要拆成不同單元 —— 不要把「講觀念＋教一個工具＋再教另一個工具＋動手做」塞進同一堂。
+- 一個工具＝一個單元；一個實作＝一個單元。內容多就拆成更多小單元，不要硬塞（塞太多＝學員資訊過載、體驗差）。單元長度以 10–15 分鐘為原則。
+- 每個單元 focus 只標「理論」或「工具」或「實作」其中一個。
+
+【完整展開，別自我壓縮】
+- 章節與單元數量要「照大綱完整展開」，該有幾章就幾章、該有幾堂就幾堂。**這階段輸出很輕、不會被長度限制，所以不要為了省篇幅壓縮章節或堂數。**
+
+course.type 三選一：偏觀念（以簡報講解為主）／偏實作（以螢幕錄製／操作為主）／觀念＋實作都有。
+
+只輸出 JSON、不要 markdown code fence、嚴格用這些英文 key：
+{"course":{"name":"","description":"","audience":"","objective":"","type":""},"chapters":[{"title":"","description":"","units":[{"title":"","duration":"約 15 分","focus":"工具"}]}]}
+每個 title 必填、不可留空。`;
+const AI_SKELETON_SCHEMA={type:"object",additionalProperties:false,required:["chapters"],properties:{
+  course:{type:"object",additionalProperties:false,properties:{name:{type:"string"},description:{type:"string"},audience:{type:"string"},objective:{type:"string"},type:{type:"string"}}},
+  chapters:{type:"array",items:{type:"object",additionalProperties:false,required:["title","units"],properties:{
+    title:{type:"string"},description:{type:"string"},
+    units:{type:"array",items:{type:"object",additionalProperties:false,required:["title"],properties:{
+      title:{type:"string"},duration:{type:"string"},focus:{type:"string"}}}}}}}
+}};
+
+const AI_EXPAND_SYS=`你是資深課程設計專家。要把「某一章」的每個單元展開成完整教學腳本，全部繁體中文（台灣用語）。核心信念：講師是引導者不是表演者。
+
+我會給你：課程資訊、這一章的標題/簡介、以及本章單元清單（每個有標題與主軸 focus）。請**依相同順序、相同數量**回傳每個單元的完整內容；若我附了「調整指示」，優先照它改。**單元只聚焦自己的主軸，別把不屬於本單元的東西硬加進來。**
+
+每個單元設計：
+- objective 學習目標：完課後「能做到」什麼、可被示範任務驗收。
+- knowledgePoints 知識點：2–4 個、聚焦本單元主軸，每個標型別 theory/tool/prac。
+- analogy 概念比喻（生活事物）。misconception 易錯點＋修正。
+- checkpoint 檢核點：一個具體是非題（例「這個區域有沒有封閉？」）。
+- demoOutput 示範任務：老師當場做出的具體成品。
+- structure 課程架構：投影片逐張清單，陣列每元素＝一張投影片，字串內用 \\n 換行：第一行「標題：…」、接 2–4 行「· …」、最後可選「老師可以說：…」。要具體到照著能做出投影片；一個 10–15 分鐘單元約 6–12 張，開頭一張宣告完課產出、結尾一張統整。
+- steps/homework/reference 視情況補。
+
+只輸出 JSON、不要 markdown code fence、用英文 key：
+{"units":[{"title":"","duration":"約 15 分","objective":"","knowledgePoints":[{"name":"","type":"tool"}],"analogy":"","misconception":"","checkpoint":"","demoOutput":"","steps":[""],"structure":["標題：…\\n· …\\n· 老師可以說：…"],"homework":"","reference":""}]}`;
+const AI_EXPAND_SCHEMA={type:"object",additionalProperties:false,required:["units"],properties:{
+  units:{type:"array",items:{type:"object",additionalProperties:false,required:["title","objective","knowledgePoints","analogy","misconception","checkpoint","demoOutput","structure"],properties:{
+    title:{type:"string"},duration:{type:"string"},objective:{type:"string"},
+    knowledgePoints:{type:"array",items:{type:"object",additionalProperties:false,required:["name","type"],properties:{name:{type:"string"},type:{type:"string",enum:["theory","tool","prac"]}}}},
+    analogy:{type:"string"},misconception:{type:"string"},checkpoint:{type:"string"},demoOutput:{type:"string"},
+    steps:{type:"array",items:{type:"string"}},structure:{type:"array",items:{type:"string"}},homework:{type:"string"},reference:{type:"string"}}}}
+}};
+
+async function aiCall(prov,key,model,sys,schema,user){
+  let url,headers,body;
+  if(prov.key==="anthropic"){
+    url="https://api.anthropic.com/v1/messages";
+    headers={"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
+    body={model,max_tokens:32000,system:sys,messages:[{role:"user",content:user}]};
+    if(schema)body.output_config={format:{type:"json_schema",schema}};
+  }else{
+    url="https://openrouter.ai/api/v1/chat/completions";
+    headers={"content-type":"application/json","authorization":"Bearer "+key,"x-title":"Course Builder"};
+    body={model,max_tokens:32000,messages:[{role:"system",content:sys},{role:"user",content:user}]};
+  }
+  const res=await fetch(url,{method:"POST",headers,body:JSON.stringify(body)});
+  const data=await res.json();
+  if(!res.ok){const m=(data&&data.error&&(data.error.message||data.error))||("HTTP "+res.status);throw new Error(typeof m==="string"?m:JSON.stringify(m));}
+  let raw;
+  if(prov.key==="anthropic"){const b=(data.content||[]).find(x=>x.type==="text");raw=b&&b.text;}
+  else{raw=data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;}
+  if(!raw)throw new Error("回應沒有內容，請重試或換模型");
+  const truncated=prov.key==="anthropic"?data.stop_reason==="max_tokens":(data.choices&&data.choices[0]&&data.choices[0].finish_reason==="length");
+  return {raw,truncated};
+}
+function chapterExpandMsg(ci,extra){
+  const c=state.chapters[ci],co=state.course;
+  const units=c.units.map((u,i)=>`${i+1}. ${u.title||"未命名"}（主軸：${u.focus||"未定"}）`).join("\n");
+  let msg=`【課程資訊】\n名稱：${co.name}\n對象：${co.audience}\n型態：${co.type}\n整體學習目標：${co.objective}\n\n【本章】第 ${ci+1} 章「${c.title}」\n章節簡介：${c.desc||"（無）"}\n\n【本章單元（請依序、同數量展開）】\n${units}`;
+  if(extra&&extra.trim())msg+=`\n\n【調整指示】${extra.trim()}`;
+  return msg;
+}
+async function aiExpandChapter(ci,extra){
+  const key=(localStorage.getItem(AI_KEY)||"").trim();
+  const model=(localStorage.getItem(AI_MODEL)||"").trim();
+  const prov=providerOf(key);
+  if(!prov.key)throw new Error("沒有可用的 API Key —— 先到「AI 生成」頁填一次金鑰");
+  if(!state.chapters[ci]||!state.chapters[ci].units.length)throw new Error("這一章沒有單元");
+  const {raw}=await aiCall(prov,key,model||prov.defaultModel,AI_EXPAND_SYS,prov.key==="anthropic"?AI_EXPAND_SCHEMA:null,chapterExpandMsg(ci,extra));
+  fillChapterDetail(ci,looseJson(raw));
+}
+function fillChapterDetail(ci,parsed){
+  const c=state.chapters[ci];const TSET={theory:1,tool:1,prac:1};
+  aiArr(parsed,["units","單元"]).forEach((u,j)=>{
+    if(j>=c.units.length)return; // 只填既有單元、不改骨架數量
+    const nu=c.units[j];const set=(k,v)=>{if(v)nu[k]=v;};
+    set("objective",aiPick(u,["objective","目標","學習目標"]));
+    const pts=aiArr(u,["knowledgePoints","points","知識點"]).map(p=>{if(typeof p==="string")return{name:p,type:""};const t=aiPick(p,["type","型別","類型"]);return{name:aiPick(p,["name","title","名稱"]),type:TSET[t]?t:""};}).filter(p=>p.name);
+    if(pts.length)nu.points=pts;
+    set("analogy",aiPick(u,["analogy","概念比喻","比喻"]));set("misconception",aiPick(u,["misconception","易錯點"]));
+    set("checkpoint",aiPick(u,["checkpoint","檢核點"]));set("demoOutput",aiPick(u,["demoOutput","示範任務","示範產出"]));
+    const steps=aiArr(u,["steps","步驟"]).map(s=>typeof s==="string"?s:aiPick(s,["text","name","step"])).filter(Boolean);if(steps.length)nu.steps=steps;
+    const struct=aiArr(u,["structure","課程架構","架構"]).map(s=>typeof s==="string"?s:aiPick(s,["text","name"])).filter(Boolean);if(struct.length)nu.structure=struct;
+    set("homework",aiPick(u,["homework","回家作業","作業"]));set("reference",aiPick(u,["reference","參考資料","參考"]));
+    if(!nu.duration)set("duration",aiPick(u,["duration","時長"]));
+  });
+}
+
 function aiView(){
   const card=document.createElement("div");card.className="card";
   const savedKey=localStorage.getItem(AI_KEY)||"";
   const savedModel=localStorage.getItem(AI_MODEL)||"";
   card.innerHTML=`<div class="crumb">AI</div><div class="sec-h">AI 生成章節與單元</div>
-    <div class="sec-d">貼上你的課程大綱或描述，AI 依「引導者」原則產出章節、單元骨架與腳本草稿（含知識點型別、概念比喻、易錯點、檢核點）。生成後會<strong>新增到現有章節後面</strong>，再由你逐項修改。</div>
+    <div class="sec-d">貼上課程大綱或描述，AI <strong>分兩階段</strong>產出：先產「骨架」（課程資訊＋章節＋每堂單元標題，一個單元只聚焦一個主軸、不塞太多），再<strong>逐章展開</strong>每堂的完整腳本（知識點/比喻/易錯點/檢核點/投影片逐張）。因為逐章分開產，<strong>章節數不再被單次長度限制</strong>、也較不會截斷；生成會取代空白範例章節。<br>⏱ 依課程大小約 1–數分鐘（逐章跑，過程會顯示進度）。之後想改某一章，到該章按「🔄 重生這一章」即可、不用整份重產。</div>
     <div class="stage-guide"><b>需要你自己的 API key（支援 Anthropic 或 OpenRouter，自動偵測）。</b>金鑰只存在你這台電腦的瀏覽器、直接送給供應商（不經任何中間伺服器）。<br>· Anthropic：<code>sk-ant-...</code>（console.anthropic.com）　· OpenRouter：<code>sk-or-...</code>（openrouter.ai/keys）。用量費用由你的金鑰負擔。</div>
     <div class="field row2">
       <div><label class="lb">API Key<span class="req">*</span></label><input class="tx" id="ai_key" type="password" placeholder="sk-ant-... 或 sk-or-..." value="${esc(savedKey)}">
@@ -893,37 +1011,34 @@ async function runAiGenerate(card){
   if(!outline){st.innerHTML='<span style="color:#b1524f">請先貼上課程大綱或描述。</span>';return;}
   const prov=providerOf(key);
   if(!prov.key){st.innerHTML='<span style="color:#b1524f">金鑰格式不認得。Anthropic 是 sk-ant-...，OpenRouter 是 sk-or-...。</span>';return;}
-  go.disabled=true;go.style.opacity=.6;st.innerHTML=`⏳ 透過 ${prov.name} 生成中…（依大綱長度約 15–60 秒，請勿關閉分頁）`;
+  const mdl=model||prov.defaultModel;
+  go.disabled=true;go.style.opacity=.6;
   try{
-    let url,headers,body;
-    if(prov.key==="anthropic"){
-      url="https://api.anthropic.com/v1/messages";
-      headers={"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
-      body={model,max_tokens:32000,system:AI_SYS,output_config:{format:{type:"json_schema",schema:AI_SCHEMA}},messages:[{role:"user",content:outline}]};
-    }else{
-      url="https://openrouter.ai/api/v1/chat/completions";
-      headers={"content-type":"application/json","authorization":"Bearer "+key,"x-title":"Course Builder"};
-      // 不加 response_format：Claude 經 OpenRouter 多半不支援 json_schema，改靠系統提示要求純 JSON + looseJson 解析
-      body={model,max_tokens:32000,messages:[{role:"system",content:AI_SYS},{role:"user",content:outline}]};
-    }
-    const res=await fetch(url,{method:"POST",headers,body:JSON.stringify(body)});
-    const data=await res.json();
-    if(!res.ok){const msg=(data&&data.error&&(data.error.message||data.error))||("HTTP "+res.status);
-      st.innerHTML=`<span style="color:#b1524f">生成失敗：${esc(typeof msg==="string"?msg:JSON.stringify(msg))}</span>`;go.disabled=false;go.style.opacity=1;return;}
-    let raw;
-    if(prov.key==="anthropic"){const block=(data.content||[]).find(b=>b.type==="text");raw=block&&block.text;}
-    else{raw=data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content;}
-    if(!raw){st.innerHTML='<span style="color:#b1524f">回應沒有內容，請重試或換個大綱／模型。</span>';go.disabled=false;go.style.opacity=1;return;}
-    let parsed;try{parsed=looseJson(raw);}catch(e){st.innerHTML='<span style="color:#b1524f">解析結果失敗（模型沒回傳乾淨 JSON），請重試或換模型。</span>';go.disabled=false;go.style.opacity=1;return;}
+    // Phase A：先產骨架（輕、不截斷，能完整列出所有章節/單元）
+    st.innerHTML=`⏳ 第 1 步：透過 ${prov.name} 產生課程骨架（章節＋單元標題）…`;
+    const skel=await aiCall(prov,key,mdl,AI_SKELETON_SYS,prov.key==="anthropic"?AI_SKELETON_SCHEMA:null,outline);
+    let parsed;try{parsed=looseJson(skel.raw);}catch(e){throw new Error("骨架解析失敗（模型沒回乾淨 JSON），請重試或換模型");}
     fillAiCourse(parsed);
-    const added=mergeAiChapters(parsed);
-    const truncated=prov.key==="anthropic"?data.stop_reason==="max_tokens":(data.choices&&data.choices[0]&&data.choices[0].finish_reason==="length");
-    save();st.innerHTML=`<span style="color:var(--green)">✓ 已帶入課程資訊，並新增 ${added.ch} 個章節、${added.u} 個單元（草稿）。到「課程資訊」查看並修改。</span>`
-      +(truncated?'<br><span style="color:#c98a2b">⚠ 內容較多、輸出可能被截斷，尾端章節或許不完整（已盡量還原）。建議把大綱拆小一點分批生成，或減少一次要的單元數。</span>':'');
+    const added=mergeAiChapters(parsed);      // 會 prune 空殼章節 + append；單元只有標題/focus
+    if(added.ch===0){st.innerHTML='<span style="color:#b1524f">骨架沒有產生任何章節，請調整大綱或重試。</span>';go.disabled=false;go.style.opacity=1;return;}
+    const startIdx=state.chapters.length-added.ch;
+    save();view.mode="course";renderBuilder();
+    // Phase B：逐章展開細節（每章一次 call，不會撞單次 token 上限）
+    let ok=0,fail=0;
+    for(let k=0;k<added.ch;k++){
+      const ci=startIdx+k;
+      st.innerHTML=`✅ 骨架完成（${added.ch} 章 / ${added.u} 單元）。⏳ 第 2 步：逐章展開細節 —— 第 ${k+1}/${added.ch} 章「${esc(state.chapters[ci].title)}」…`;
+      try{await aiExpandChapter(ci,"");delete state.chapters[ci]._expandErr;ok++;}
+      catch(e){fail++;state.chapters[ci]._expandErr=String(e&&e.message||e);}
+      save();
+    }
+    view.mode="course";renderBuilder();
+    st.innerHTML=`<span style="color:var(--green)">✓ 完成：${added.ch} 章、${added.u} 單元，已展開 ${ok} 章`
+      +(fail?`（${fail} 章展開失敗，可到該章按「🔄 重生這一章」重試）`:"")
+      +`。到左側點章節查看／修改。</span>`;
     go.disabled=false;go.style.opacity=1;
-    setTimeout(()=>{view.mode="course";renderBuilder();},900);
   }catch(err){
-    st.innerHTML=`<span style="color:#b1524f">連線失敗：${esc(String(err&&err.message||err))}。若是 CORS/網路問題，確認金鑰正確且網路可連 api.anthropic.com。</span>`;
+    st.innerHTML=`<span style="color:#b1524f">生成失敗：${esc(String(err&&err.message||err))}</span>`;
     go.disabled=false;go.style.opacity=1;
   }
 }
@@ -947,15 +1062,26 @@ function fillAiCourse(parsed){
   set("objective",aiPick(c,["objective","目標","整體學習目標","學習目標"]));
   if(!(cur.type||"").trim()){const t=aiCourseType(aiPick(c,["type","課程型態","型態"]));if(t)cur.type=t;}
 }
+function isBlankChapter(ch){
+  const t=(ch.title||"").trim(), tBlank=!t||/範例/.test(t);
+  const dBlank=!(ch.desc||"").trim();
+  const uBlank=!ch.units||ch.units.length===0||ch.units.every(u=>{
+    const ut=(u.title||"").trim();
+    return (!ut||/範例|點我編輯/.test(ut))&&(!u.points||!u.points.length)&&!(u.objective||"").trim();
+  });
+  return tBlank&&dBlank&&uBlank;
+}
 function mergeAiChapters(parsed){
   let chn=0,un=0;const TSET={theory:1,tool:1,prac:1};
   const chapters=aiArr(parsed,["chapters","章節"]);
+  // AI 章節要「取代」殘留的空白／範例章節，而非追加其後（否則章節1 永遠是空殼）
+  if(chapters.length)state.chapters=state.chapters.filter(ch=>!isBlankChapter(ch));
   chapters.forEach(c=>{
     const ch=newChapter(aiPick(c,["title","name","標題","名稱","章節名稱"])||"未命名章節");
     ch.desc=aiPick(c,["description","desc","簡介","說明","章節簡介"]);
     aiArr(c,["units","單元","unit"]).forEach(u=>{
       const nu=newUnit(aiPick(u,["title","name","標題","名稱","單元名稱"])||"未命名單元");
-      nu.duration=aiPick(u,["duration","時長","時數"]);nu.objective=aiPick(u,["objective","目標","學習目標"]);
+      nu.duration=aiPick(u,["duration","時長","時數"]);nu.focus=aiPick(u,["focus","主軸","type","類型"]);nu.objective=aiPick(u,["objective","目標","學習目標"]);
       nu.points=aiArr(u,["knowledgePoints","points","知識點","knowledge_points"]).map(p=>{
         if(typeof p==="string")return {name:p,type:""};
         const t=aiPick(p,["type","型別","類型"]);return {name:aiPick(p,["name","title","名稱"]),type:TSET[t]?t:""};});
