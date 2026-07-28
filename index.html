@@ -494,9 +494,10 @@ function chapterView(c){
     <div id="chUnits"></div>
     <button class="add" id="ch_addu">＋ 新增單元</button>
     <div class="field" style="margin-top:18px;padding:12px;border:1.5px dashed var(--line);border-radius:10px;background:var(--panel)">
-      <label class="lb">🔄 AI 重生／微調這一章<span class="hint">只重跑這一章的單元內容，不用整份重產。</span></label>
+      <label class="lb">🔄 AI 補完／微調這一章<span class="hint">只跑這一章，不用整份重產。</span></label>
       <input class="tx" id="ch_regen_note" placeholder="（選填）調整指示，例：多舉招募場景的例子、每堂再精簡、換個比喻" style="margin-bottom:8px">
-      <button class="btn sm" id="ch_regen" style="background:var(--ink);color:#fff">重生本章單元內容</button>
+      <button class="btn sm" id="ch_regen" style="background:var(--ink);color:#fff">執行</button>
+      <div class="hint" style="margin-top:6px">留空按＝<b>只補未完成的單元</b>（已填/手改的不動）；填了指示按＝<b>整章依指示重生</b>。</div>
       <div id="ch_regen_status" style="margin-top:8px;font-size:13px;color:var(--sub)"></div>
     </div>
     <div style="margin-top:22px;display:flex;gap:10px;flex-wrap:wrap">
@@ -519,8 +520,9 @@ function chapterView(c){
     if(rg)rg.onclick=async()=>{
       if(!c.units.length){rgs.innerHTML='<span style="color:#b1524f">這一章還沒有單元，先「新增單元」或用 AI 生成。</span>';return;}
       const note=($("#ch_regen_note",card).value||"").trim();
-      rg.disabled=true;rg.style.opacity=.6;rgs.innerHTML='⏳ AI 重生本章單元內容中…（約 15–40 秒，請勿關閉分頁）';
-      try{await aiExpandChapter(ci,note);delete c._expandErr;save();renderBuilder();}
+      const onlyEmpty=!note; // 沒給指示＝只補「未完成」的單元（不覆蓋已填/手改的）；給了指示＝整章依指示重生
+      rg.disabled=true;rg.style.opacity=.6;rgs.innerHTML=(onlyEmpty?'⏳ 補上這一章「未完成」的單元…':'⏳ 依指示整章重生…')+'（單元多會分批跑，勿關分頁）';
+      try{await aiExpandChapter(ci,note,onlyEmpty,(d,t)=>{rgs.innerHTML=`⏳ 生成中… 單元 ${d}/${t}`;});delete c._expandErr;save();renderBuilder();}
       catch(e){rgs.innerHTML=`<span style="color:#b1524f">失敗：${esc(String(e&&e.message||e))}</span>`;rg.disabled=false;rg.style.opacity=1;}
     };
     renderChUnits(c,ci,card);
@@ -911,26 +913,18 @@ async function aiCall(prov,key,model,sys,schema,user){
   const truncated=prov.key==="anthropic"?data.stop_reason==="max_tokens":(data.choices&&data.choices[0]&&data.choices[0].finish_reason==="length");
   return {raw,truncated};
 }
-function chapterExpandMsg(ci,extra){
+function isUnitFilled(u){return !!((u.objective&&u.objective.trim())||(u.points&&u.points.length)||(u.structure&&u.structure.length));}
+function expandBatchMsg(ci,idxs,extra){
   const c=state.chapters[ci],co=state.course;
-  const units=c.units.map((u,i)=>`${i+1}. ${u.title||"未命名"}（主軸：${u.focus||"未定"}）`).join("\n");
-  let msg=`【課程資訊】\n名稱：${co.name}\n對象：${co.audience}\n型態：${co.type}\n整體學習目標：${co.objective}\n\n【本章】第 ${ci+1} 章「${c.title}」\n章節簡介：${c.desc||"（無）"}\n\n【本章單元（請依序、同數量展開）】\n${units}`;
+  const units=idxs.map((i,n)=>`${n+1}. ${c.units[i].title||"未命名"}（主軸：${c.units[i].focus||"未定"}）`).join("\n");
+  let msg=`【課程資訊】\n名稱：${co.name}\n對象：${co.audience}\n型態：${co.type}\n整體學習目標：${co.objective}\n\n【本章】第 ${ci+1} 章「${c.title}」\n章節簡介：${c.desc||"（無）"}\n\n【要展開的單元（請依序、剛好回傳 ${idxs.length} 個）】\n${units}`;
   if(extra&&extra.trim())msg+=`\n\n【調整指示】${extra.trim()}`;
   return msg;
 }
-async function aiExpandChapter(ci,extra){
-  const key=(localStorage.getItem(AI_KEY)||"").trim();
-  const model=(localStorage.getItem(AI_MODEL)||"").trim();
-  const prov=providerOf(key);
-  if(!prov.key)throw new Error("沒有可用的 API Key —— 先到「AI 生成」頁填一次金鑰");
-  if(!state.chapters[ci]||!state.chapters[ci].units.length)throw new Error("這一章沒有單元");
-  const {raw}=await aiCall(prov,key,model||prov.defaultModel,AI_EXPAND_SYS,prov.key==="anthropic"?AI_EXPAND_SCHEMA:null,chapterExpandMsg(ci,extra));
-  fillChapterDetail(ci,looseJson(raw));
-}
-function fillChapterDetail(ci,parsed){
+function fillUnitsAt(ci,idxs,parsed){
   const c=state.chapters[ci];const TSET={theory:1,tool:1,prac:1};
-  aiArr(parsed,["units","單元"]).forEach((u,j)=>{
-    if(j>=c.units.length)return; // 只填既有單元、不改骨架數量
+  aiArr(parsed,["units","單元"]).forEach((u,n)=>{
+    const j=idxs[n];if(j==null||j>=c.units.length)return;
     const nu=c.units[j];const set=(k,v)=>{if(v)nu[k]=v;};
     set("objective",aiPick(u,["objective","目標","學習目標"]));
     const pts=aiArr(u,["knowledgePoints","points","知識點"]).map(p=>{if(typeof p==="string")return{name:p,type:""};const t=aiPick(p,["type","型別","類型"]);return{name:aiPick(p,["name","title","名稱"]),type:TSET[t]?t:""};}).filter(p=>p.name);
@@ -942,6 +936,25 @@ function fillChapterDetail(ci,parsed){
     set("homework",aiPick(u,["homework","回家作業","作業"]));set("reference",aiPick(u,["reference","參考資料","參考"]));
     if(!nu.duration)set("duration",aiPick(u,["duration","時長"]));
   });
+}
+// 逐章展開，但一次只送一小批單元（避免單章太多堂 → 一次 call 又被 32k 截斷）；批次跑到完。
+async function aiExpandChapter(ci,extra,onlyEmpty,onProgress){
+  const key=(localStorage.getItem(AI_KEY)||"").trim();
+  const model=(localStorage.getItem(AI_MODEL)||"").trim();
+  const prov=providerOf(key);
+  if(!prov.key)throw new Error("沒有可用的 API Key —— 先到「AI 生成」頁填一次金鑰");
+  const c=state.chapters[ci];if(!c||!c.units.length)throw new Error("這一章沒有單元");
+  let idxs=c.units.map((u,i)=>i);
+  if(onlyEmpty)idxs=idxs.filter(i=>!isUnitFilled(c.units[i]));
+  if(!idxs.length)return;
+  const BATCH=4;let done=0;const total=idxs.length;
+  for(let b=0;b<idxs.length;b+=BATCH){
+    const batch=idxs.slice(b,b+BATCH);
+    const {raw}=await aiCall(prov,key,model||prov.defaultModel,AI_EXPAND_SYS,prov.key==="anthropic"?AI_EXPAND_SCHEMA:null,expandBatchMsg(ci,batch,extra));
+    fillUnitsAt(ci,batch,looseJson(raw));
+    done+=batch.length;save();
+    if(onProgress)onProgress(done,total);
+  }
 }
 
 function aiView(){
@@ -1023,13 +1036,14 @@ async function runAiGenerate(card){
     if(added.ch===0){st.innerHTML='<span style="color:#b1524f">骨架沒有產生任何章節，請調整大綱或重試。</span>';go.disabled=false;go.style.opacity=1;return;}
     const startIdx=state.chapters.length-added.ch;
     save();view.mode="course";renderBuilder();
-    // Phase B：逐章展開細節（每章一次 call，不會撞單次 token 上限）
+    // Phase B：逐章展開細節，每章內再「分小批」跑到完（避免單章太多堂又被截斷）
     let ok=0,fail=0;
     for(let k=0;k<added.ch;k++){
-      const ci=startIdx+k;
-      st.innerHTML=`✅ 骨架完成（${added.ch} 章 / ${added.u} 單元）。⏳ 第 2 步：逐章展開細節 —— 第 ${k+1}/${added.ch} 章「${esc(state.chapters[ci].title)}」…`;
-      try{await aiExpandChapter(ci,"");delete state.chapters[ci]._expandErr;ok++;}
-      catch(e){fail++;state.chapters[ci]._expandErr=String(e&&e.message||e);}
+      const ci=startIdx+k;const chTitle=esc(state.chapters[ci].title);
+      try{
+        await aiExpandChapter(ci,"",false,(d,t)=>{st.innerHTML=`✅ 骨架完成（${added.ch} 章 / ${added.u} 單元）。⏳ 第 2 步：逐章展開 —— 第 ${k+1}/${added.ch} 章「${chTitle}」 單元 ${d}/${t}…`;});
+        delete state.chapters[ci]._expandErr;ok++;
+      }catch(e){fail++;state.chapters[ci]._expandErr=String(e&&e.message||e);}
       save();
     }
     view.mode="course";renderBuilder();
